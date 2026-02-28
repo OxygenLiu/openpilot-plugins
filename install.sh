@@ -127,22 +127,10 @@ overlay_framework() {
 
 # --- 2. Overlay cereal schema ---
 overlay_cereal() {
-  local src="$SCRIPT_DIR/cereal/custom.capnp"
-  local dst="$OPENPILOT_ROOT/cereal/custom.capnp"
-
-  log "Overlaying cereal: cereal/custom.capnp"
-
-  if $DRY_RUN; then
-    echo "  COPY cereal/custom.capnp → cereal/custom.capnp"
-    return
-  fi
-
-  if [[ ! -d "$OPENPILOT_ROOT/cereal" ]]; then
-    warn "cereal/ directory not found in openpilot tree — skipping"
-    return
-  fi
-
-  cp -v "$src" "$dst"
+  # NOTE: custom.capnp is patched at boot by the plugin builder (builder.py).
+  # It reads each plugin's cereal slot claims and standalone schemas, then
+  # patches the stock custom.capnp. Overlaying here would conflict.
+  log "Skipping cereal overlay (builder.py handles custom.capnp at boot)"
 }
 
 # --- 3. Copy plugin packages ---
@@ -176,14 +164,27 @@ install_plugins() {
     local dest="$PLUGINS_DEST/$name"
     if [[ -d "$dest" ]]; then
       log "  Updating: $name"
+      # Preserve site-packages/ (pip-installed deps from boot_patch.sh)
+      # and .disabled marker (user preference)
+      local had_site_packages=false
+      if [[ -d "$dest/site-packages" ]]; then
+        mv "$dest/site-packages" "/tmp/_plugin_site_packages_$$"
+        had_site_packages=true
+      fi
+      local was_disabled=false
+      [[ -f "$dest/.disabled" ]] && was_disabled=true
       rm -rf "$dest"
+      cp -r "$plugin_dir" "$dest"
+      if $had_site_packages; then
+        mv "/tmp/_plugin_site_packages_$$" "$dest/site-packages"
+      fi
+      if $was_disabled; then
+        touch "$dest/.disabled"
+      fi
     else
       log "  Installing: $name"
+      cp -r "$plugin_dir" "$dest"
     fi
-    cp -r "$plugin_dir" "$dest"
-
-    # Remove .disabled marker if present (fresh install = enabled)
-    rm -f "$dest/.disabled"
   done
 }
 
