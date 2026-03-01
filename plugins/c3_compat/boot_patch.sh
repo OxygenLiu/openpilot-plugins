@@ -104,7 +104,6 @@ RAYLIB_DRM="/data/plugins/c3_compat/raylib_drm"
 if [ -d "$RAYLIB_DRM/raylib" ] && ! /usr/local/venv/bin/python3 -c "import raylib" 2>&1 | grep -q 'DRM\|STATIC'; then
   [ $_venv_patched -eq 0 ] && sudo mount -o remount,rw / 2>/dev/null
   sudo cp -rf "$RAYLIB_DRM/raylib/"* "$VENV_SITE/raylib/"
-  sudo cp -rf "$RAYLIB_DRM/pyray/"* "$VENV_SITE/pyray/" 2>/dev/null || true
   _venv_patched=1
   echo "[c3_compat] Installed DRM raylib to venv"
 fi
