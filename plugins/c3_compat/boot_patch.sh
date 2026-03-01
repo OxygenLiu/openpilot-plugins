@@ -455,4 +455,69 @@ fi
 #     Stale .pyc files cause patches to be ignored until cache expires.
 find "$OPENPILOT_DIR/panda/python" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
+# 14. Persistent crash diagnostics
+#     AGNOS 12.8 uses volatile journal (/var/log is 128MB tmpfs) — all evidence
+#     is lost on hang/reboot. Capture dmesg + system state to /data/ on each boot
+#     so we can inspect the previous boot's final moments after a crash.
+DIAG_DIR="/data/crash_diag"
+mkdir -p "$DIAG_DIR"
+
+# Rotate previous boot's dmesg before overwriting
+# Keep last 3 boots: dmesg_boot1.log (prev), dmesg_boot2.log, dmesg_boot3.log
+for i in 2 1; do
+  [ -f "$DIAG_DIR/dmesg_boot${i}.log" ] && mv -f "$DIAG_DIR/dmesg_boot${i}.log" "$DIAG_DIR/dmesg_boot$((i+1)).log"
+done
+[ -f "$DIAG_DIR/dmesg_current.log" ] && mv -f "$DIAG_DIR/dmesg_current.log" "$DIAG_DIR/dmesg_boot1.log"
+
+# Save THIS boot's dmesg ring buffer (kernel panics, OOM kills,
+# USB disconnects, watchdog triggers, thermal shutdowns)
+dmesg -T > "$DIAG_DIR/dmesg_current.log" 2>/dev/null || dmesg > "$DIAG_DIR/dmesg_current.log"
+
+# Snapshot system state at boot time (baseline for comparison if hang occurs)
+{
+  echo "=== Boot $(date '+%Y-%m-%d %H:%M:%S') ==="
+  echo "--- uptime ---"
+  uptime
+  echo "--- memory ---"
+  free -m
+  echo "--- panda USB ---"
+  lsusb 2>/dev/null | grep -i 'panda\|1209\|bbaa\|3801' || echo "no panda USB device found"
+  echo "--- thermal ---"
+  cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -10
+  echo "--- processes ---"
+  ps aux --sort=-%mem | head -15
+  echo "--- disk ---"
+  df -h /data
+} > "$DIAG_DIR/boot_state.log" 2>/dev/null
+
+# Background watchdog: periodically save system vitals to catch state before hang
+# Writes every 60s, keeps only latest snapshot (not a growing log)
+(
+  while true; do
+    sleep 60
+    {
+      echo "=== Vitals $(date '+%Y-%m-%d %H:%M:%S') ==="
+      echo "--- uptime ---"
+      uptime
+      echo "--- memory ---"
+      free -m
+      echo "--- top CPU ---"
+      ps aux --sort=-%cpu | head -8
+      echo "--- top MEM ---"
+      ps aux --sort=-%mem | head -8
+      echo "--- thermal ---"
+      cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -10
+      echo "--- dmesg tail ---"
+      dmesg | tail -20
+    } > "$DIAG_DIR/vitals.log" 2>/dev/null
+  done
+) &
+VITALS_PID=$!
+echo "[c3_compat] Crash diagnostics enabled (pid $VITALS_PID, logs in $DIAG_DIR)"
+
+# On next boot after a hang, check these files:
+#   /data/crash_diag/dmesg_boot1.log  — previous boot's kernel log
+#   /data/crash_diag/vitals.log       — last system state before hang
+#   /data/crash_diag/boot_state.log   — current boot baseline
+
 echo "[c3_compat] Boot patches applied successfully"
