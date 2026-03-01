@@ -7,11 +7,10 @@
 Full BMW E8x/E9x car interface for openpilot:
 
 - **VIN-based detection** — Empty CAN fingerprints, pure VIN model code matching
-- **Car interface** — CarState (CAN parsing), CarController (actuator commands), CarParams
-- **DCC control** — Dynamic Cruise Control via tick-counted commands
+- **Car interface** — CarState (Empty CAN parsing), CarController (actuator commands), CarParams
+- **DCC control** — Speed-dependent Dynamic Cruise Control via tick-counted commands
 - **Stepper servo steering** — Ocelot stepper servo on F-CAN/AUX-CAN
 - **Panda safety model** — BMW safety rules (bmw.h, safety model ID 35)
-- **Panda status monitoring** — ELM327 fallback detection, firmware health
 
 ## Supported platforms
 
@@ -55,3 +54,7 @@ bmw_e9x_e8x/
 | 0 | PT-CAN | Engine, brakes, speed, transmission, cruise |
 | 1 | F-CAN | Stepper servo (if equipped) |
 | 2 | AUX-CAN | Alternative servo bus, message routing |
+
+## Credits
+
+Based on [dzid26's BMW E8x/E9x openpilot implementation](https://github.com/BMW-E8x-E9x/openpilot) — the original BMW car interface, DBC definitions, and panda safety model for openpilot.
