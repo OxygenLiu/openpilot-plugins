@@ -33,6 +33,7 @@
     "mapdExtendedOut": [true, 20.0, 20],
     "mapdIn": [false, 0.0]
   },
+  "panel": true,
   "processes": [
     {
       "name": "mapd",

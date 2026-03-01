@@ -36,11 +36,24 @@
     }
   ],
   "params": {
+    "ShowSpeedLimitSign": {
+      "type": "bool",
+      "default": true,
+      "label": "Show Speed Limit Sign",
+      "desc": "Display speed limit sign on HUD"
+    },
+    "ShowCurvatureSpeed": {
+      "type": "bool",
+      "default": true,
+      "label": "Show Curvature Speed",
+      "desc": "Display recommended curve speed on HUD"
+    },
     "MapdSpeedLimitControlEnabled": {
       "type": "bool",
       "default": false,
       "label": "Map Speed Control",
-      "desc": "Automatically limit speed based on OSM map data"
+      "desc": "Automatically limit speed based on OSM map data",
+      "requiresPlugin": "mapd"
     },
     "MapdSpeedLimitOffsetPercent": {
       "type": "pills",
