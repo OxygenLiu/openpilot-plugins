@@ -256,7 +256,7 @@ fi
 # 9. Pandad: skip firmware flashing for F4 panda (BMW plugin handles firmware)
 #    Without this, pandad would try to flash non-existent panda.bin.signed
 PANDAD_FILE="$OPENPILOT_DIR/selfdrive/pandad/pandad.py"
-if [ -f "$PANDAD_FILE" ] && ! grep -q 'BOARDD_SKIP_FW_CHECK' "$PANDAD_FILE"; then
+if [ -f "$PANDAD_FILE" ] && ! grep -q 'c3_compat' "$PANDAD_FILE"; then
   python3 - "$PANDAD_FILE" << 'PYEOF'
 import sys
 path = sys.argv[1]
@@ -291,13 +291,58 @@ new_sig = '''  # c3_compat: skip firmware flashing for F4 panda (BMW plugin hand
 if old_sig in content:
     content = content.replace(old_sig, new_sig)
 
-# c3_compat: set BOARDD_SKIP_FW_CHECK for F4 panda so C++ pandad doesn't abort
-# The C++ binary checks up_to_date() which compares firmware signatures,
-# but F4 firmware files (panda.bin.signed) don't exist in v0.10.3.
-old_launch = '''    process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "selfdrive/pandad"))'''
-new_launch = '''    # c3_compat: skip C++ firmware check for F4 panda
+# c3_compat: skip first_run reset for F4 pandas
+# panda.reset(reconnect=True) disconnects USB then tries reconnect() which calls
+# connect(wait=True) — this creates an infinite loop if F4 panda is slow to
+# re-enumerate over USB after a soft reset (0xd8 control transfer).
+old_reset = '''        if first_run:
+          # reset panda to ensure we're in a good state
+          cloudlog.info(f"Resetting panda {panda.get_usb_serial()}")
+          panda.reset(reconnect=True)'''
+new_reset = '''        if first_run:
+          # c3_compat: skip reset for F4 panda (USB reconnect hangs with STM32F4)
+          from panda.python.constants import McuType
+          if panda.get_mcu_type() != McuType.F4:
+            cloudlog.info(f"Resetting panda {panda.get_usb_serial()}")
+            panda.reset(reconnect=True)
+          else:
+            cloudlog.info("c3_compat: skipping reset for F4 panda %s", panda.get_usb_serial())'''
+if old_reset in content:
+    content = content.replace(old_reset, new_reset)
+
+# c3_compat: USB settle delay + BOARDD_SKIP_FW_CHECK + crash backoff
+# - time.sleep(2): gives kernel time to release USB after Python closes handles
+# - BOARDD_SKIP_FW_CHECK: F4 firmware files don't exist in v0.10.3
+# - crash backoff: prevents crash loop → SOM reset → red LED hang
+old_launch = '''    first_run = False
+
+    # run pandad with all connected serials as arguments
+    os.environ['MANAGER_DAEMON'] = 'pandad'
+    process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "selfdrive/pandad"))
+    process.wait()'''
+new_launch = '''    first_run = False
+
+    # c3_compat: give kernel time to release USB device so native pandad can claim it
+    time.sleep(2)
+
+    # run pandad with all connected serials as arguments
+    os.environ['MANAGER_DAEMON'] = 'pandad'
+    # c3_compat: skip C++ firmware check for F4 panda
     os.environ["BOARDD_SKIP_FW_CHECK"] = "1"
-    process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "selfdrive/pandad"))'''
+    process = subprocess.Popen(["./pandad", *panda_serials], cwd=os.path.join(BASEDIR, "selfdrive/pandad"))
+    process.wait()
+
+    # c3_compat: crash backoff for F4 panda SPI incompatibility
+    if process.returncode != 0:
+      if not hasattr(main, '_crash_count'):
+        main._crash_count = 0
+      main._crash_count += 1
+      backoff = min(60, 5 * main._crash_count)
+      cloudlog.warning("c3_compat: native pandad crashed (code %d), backing off %ds (crash #%d)",
+                       process.returncode, backoff, main._crash_count)
+      time.sleep(backoff)
+    else:
+      main._crash_count = 0'''
 if old_launch in content and 'BOARDD_SKIP_FW_CHECK' not in content:
     content = content.replace(old_launch, new_launch)
 
@@ -306,5 +351,78 @@ with open(path, 'w') as f:
 PYEOF
   echo "[c3_compat] Patched pandad.py to skip F4 firmware flashing"
 fi
+
+# 10. SPI: disable for C3 (F4 panda) to force native pandad USB-only mode
+#     v0.10.3's native pandad SPI protocol is incompatible with STM32F4.
+#     Without this, native pandad crash-loops on SPI → SIGABRT → Python wrapper
+#     restarts → panda heartbeat watchdog fires → SOM reset → red LED hang.
+#     Blocking SPI makes the C++ Panda constructor's SPI fallback throw immediately,
+#     so it connects via USB instead.
+if [ -e /dev/spidev0.0 ]; then
+  sudo chmod 000 /dev/spidev0.0
+  echo "[c3_compat] Disabled SPI device (F4 panda USB-only mode)"
+fi
+
+# 11. SPI Python: handle PermissionError when SPI device is blocked
+#     SpiDevice.__init__ opens /dev/spidev0.0 — blocked by chmod 000 above.
+#     Without this patch, PandaSpiHandle() raises raw PermissionError instead
+#     of PandaSpiException, bypassing the SPI error handlers in connect/list.
+PANDA_SPI="$OPENPILOT_DIR/panda/python/spi.py"
+if [ -f "$PANDA_SPI" ] && ! grep -q 'c3_compat' "$PANDA_SPI"; then
+  python3 - "$PANDA_SPI" << 'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+# Wrap SpiDev open in PermissionError handler
+old = '''      if speed not in SPI_DEVICES:
+        SPI_DEVICES[speed] = spidev.SpiDev()
+        SPI_DEVICES[speed].open(0, 0)
+        SPI_DEVICES[speed].max_speed_hz = speed'''
+
+new = '''      if speed not in SPI_DEVICES:
+        try:
+          SPI_DEVICES[speed] = spidev.SpiDev()
+          SPI_DEVICES[speed].open(0, 0)
+          SPI_DEVICES[speed].max_speed_hz = speed
+        except PermissionError:
+          # c3_compat: SPI disabled for F4 panda USB-only mode
+          raise PandaSpiUnavailable("SPI device permission denied (F4 USB-only mode)")'''
+
+if old in content:
+    content = content.replace(old, new)
+    with open(path, 'w') as f:
+        f.write(content)
+PYEOF
+  echo "[c3_compat] Patched spi.py PermissionError → PandaSpiUnavailable"
+fi
+
+# 12. DFU Python: broaden spi_list() exception handler
+#     PandaDFU.spi_list() only catches PandaSpiException but PermissionError
+#     can cascade as ValueError from SpiDev cleanup. Catch all exceptions.
+PANDA_DFU="$OPENPILOT_DIR/panda/python/dfu.py"
+if [ -f "$PANDA_DFU" ] && ! grep -q 'c3_compat' "$PANDA_DFU"; then
+  python3 - "$PANDA_DFU" << 'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+# Replace narrow exception handler with broad one
+old = '''    except PandaSpiException:'''
+new = '''    except Exception:  # c3_compat: catch PermissionError from disabled SPI'''
+
+if old in content:
+    content = content.replace(old, new, 1)  # only replace in spi_list, not elsewhere
+    with open(path, 'w') as f:
+        f.write(content)
+PYEOF
+  echo "[c3_compat] Patched dfu.py spi_list() exception handler"
+fi
+
+# 13. Clear Python bytecode cache for patched panda modules
+#     Stale .pyc files cause patches to be ignored until cache expires.
+find "$OPENPILOT_DIR/panda/python" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
 echo "[c3_compat] Boot patches applied successfully"
