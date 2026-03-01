@@ -491,29 +491,14 @@ dmesg -T > "$DIAG_DIR/dmesg_current.log" 2>/dev/null || dmesg > "$DIAG_DIR/dmesg
 } > "$DIAG_DIR/boot_state.log" 2>/dev/null
 
 # Background watchdog: periodically save system vitals to catch state before hang
-# Writes every 60s, keeps only latest snapshot (not a growing log)
-(
-  while true; do
-    sleep 60
-    {
-      echo "=== Vitals $(date '+%Y-%m-%d %H:%M:%S') ==="
-      echo "--- uptime ---"
-      uptime
-      echo "--- memory ---"
-      free -m
-      echo "--- top CPU ---"
-      ps aux --sort=-%cpu | head -8
-      echo "--- top MEM ---"
-      ps aux --sort=-%mem | head -8
-      echo "--- thermal ---"
-      cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -10
-      echo "--- dmesg tail ---"
-      dmesg | tail -20
-    } > "$DIAG_DIR/vitals.log" 2>/dev/null
-  done
-) &
-VITALS_PID=$!
-echo "[c3_compat] Crash diagnostics enabled (pid $VITALS_PID, logs in $DIAG_DIR)"
+# Uses setsid to create a new session — survives the exec in continue.sh
+WATCHDOG="/data/plugins/c3_compat/watchdog.sh"
+if [ -f "$WATCHDOG" ]; then
+  # Kill any stale watchdog from previous boot
+  pkill -f "watchdog.sh" 2>/dev/null || true
+  setsid "$WATCHDOG" &
+  echo "[c3_compat] Crash diagnostics enabled (logs in $DIAG_DIR)"
+fi
 
 # On next boot after a hang, check these files:
 #   /data/crash_diag/dmesg_boot1.log  — previous boot's kernel log
