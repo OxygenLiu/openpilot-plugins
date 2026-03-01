@@ -53,6 +53,7 @@ fi
 #     /home is a 100MB overlay that fills up fast. tinygrad cache (model compilation)
 #     and pip cache (venv_sync) need to live on /data/ (16GB+ available).
 CACHE_DIR="/home/comma/.cache"
+mkdir -p "$CACHE_DIR"
 for subdir in pip tinygrad; do
   if [ ! -L "$CACHE_DIR/$subdir" ]; then
     mkdir -p "/data/cache/$subdir"
