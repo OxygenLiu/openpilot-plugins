@@ -178,9 +178,9 @@ Claim a slot (0-19) in your manifest to get a custom cereal struct:
 
 ## Architecture Docs
 
-- [VISION.md](plugins/docs/VISION.md) — Plugin architecture vision
-- [INTEGRATION_ARCHITECTURE.md](plugins/docs/INTEGRATION_ARCHITECTURE.md) — Technical deep-dive
-- [HOOK_INTEGRATION_POINTS.md](plugins/docs/HOOK_INTEGRATION_POINTS.md) — All hook call sites
+- [VISION.md](docs/VISION.md) — Plugin architecture vision
+- [INTEGRATION_ARCHITECTURE.md](docs/INTEGRATION_ARCHITECTURE.md) — Technical deep-dive
+- [HOOK_INTEGRATION_POINTS.md](docs/HOOK_INTEGRATION_POINTS.md) — All hook call sites
 
 ## License
 

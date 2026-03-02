@@ -97,7 +97,7 @@ verify_hooks() {
     warn "Your openpilot tree is missing $missing hook call sites."
     warn "Plugins will install but won't activate until hook call sites"
     warn "are added to controlsd.py, longitudinal_planner.py, and manager.py."
-    warn "See plugins/docs/HOOK_INTEGRATION_POINTS.md for details."
+    warn "See docs/HOOK_INTEGRATION_POINTS.md for details."
     warn ""
   fi
 }
