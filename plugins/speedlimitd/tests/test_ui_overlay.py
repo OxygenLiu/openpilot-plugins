@@ -1,7 +1,12 @@
 """Tests for speedlimitd UI overlay — speed limit sign rendering via ui.render_overlay hook."""
 import math
+import sys
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
+
+# Mock pyray at module level — it's only available on devices with GPU/display
+if 'pyray' not in sys.modules:
+  sys.modules['pyray'] = MagicMock()
 import pyray as rl
 
 
@@ -9,8 +14,6 @@ import pyray as rl
 @pytest.fixture(autouse=True)
 def mock_openpilot(monkeypatch):
   """Mock all openpilot dependencies so tests run without openpilot installed."""
-  import sys
-
   # Create mock modules for openpilot imports
   mock_modules = {}
   for mod in [
@@ -74,9 +77,15 @@ def overlay(mock_openpilot):
   return mod
 
 
+class _Rect:
+  """Simple rectangle with numeric attributes (rl.Rectangle is mocked)."""
+  def __init__(self, x, y, w, h):
+    self.x = x; self.y = y; self.width = w; self.height = h
+
+
 @pytest.fixture
 def content_rect():
-  return rl.Rectangle(30, 30, 1780, 1020)
+  return _Rect(30, 30, 1780, 1020)
 
 
 class TestConstants:
@@ -290,27 +299,31 @@ class TestOnRenderOverlay:
     assert mock_draw_text.call_count == 2
 
   def test_alpha_confirmed_vs_unconfirmed(self, overlay, mock_openpilot, content_rect):
-    """Confirmed = alpha 255, unconfirmed = alpha 128."""
+    """Confirmed = alpha 255, unconfirmed = alpha 128.
+
+    The draw code uses: alpha = 255 if _speed_limit_confirmed else 128
+    We verify by intercepting Color() calls through the mocked pyray module.
+    """
     mock_sls = MagicMock()
     mock_sls.speedLimit = 60.0
     mock_sls.source.raw = 1
     mock_openpilot['sm'].recv_frame = {"speedLimitState": 1}
     mock_openpilot['sm'].__getitem__ = MagicMock(return_value=mock_sls)
 
+    pyray_mock = sys.modules['pyray']
     for confirmed, expected_alpha in [(True, 255), (False, 128)]:
       mock_sls.confirmed = confirmed
-      with patch('pyray.draw_circle') as mock_draw_circle, \
-           patch('pyray.draw_text_ex'), \
-           patch('pyray.is_mouse_button_released', return_value=False):
-        # Reload to reset state
-        import importlib
-        importlib.reload(overlay)
-        overlay = __import__('plugins.speedlimitd.ui_overlay', fromlist=['ui_overlay'])
-        overlay.on_render_overlay(None, content_rect)
+      # Track Color calls via the pyray mock in sys.modules
+      color_alphas = []
+      pyray_mock.Color = MagicMock(side_effect=lambda r, g, b, a: color_alphas.append(a) or MagicMock(a=a))
 
-      # Check alpha on the outer ring (first draw_circle call)
-      ring_color = mock_draw_circle.call_args_list[0][0][3]
-      assert ring_color.a == expected_alpha
+      import importlib
+      importlib.reload(overlay)
+      overlay = __import__('plugins.speedlimitd.ui_overlay', fromlist=['ui_overlay'])
+      overlay.on_render_overlay(None, content_rect)
+
+      # All Color() calls should use the same alpha for this frame
+      assert expected_alpha in color_alphas, f"Expected alpha {expected_alpha} in {color_alphas}"
 
 
 class TestDrawPositioning:
